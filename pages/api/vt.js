@@ -4,66 +4,46 @@ export default async function handler(req, res) {
   }
 
   const { hash } = req.body;
-  if (!hash) {
-    return res.status(400).json({ error: "Missing hash" });
-  }
+  if (!hash) return res.status(400).json({ error: "Missing hash" });
 
   try {
     const apiKey = process.env.VT_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "VT_KEY not set" });
+    if (!apiKey) return res.status(500).json({ error: "VT_KEY not set in environment variables" });
+
+    const url = `https://www.virustotal.com/api/v3/files/${hash}`;
+
+    const resp = await fetch(url, { headers: { "x-apikey": apiKey } });
+    const data = await resp.json();
+
+    if (!data || !data.data) {
+      return res.status(404).json({ error: "No data found for this hash" });
     }
 
-    const resp = await fetch(
-      `https://www.virustotal.com/api/v3/files/${hash}`,
-      {
-        headers: { "x-apikey": apiKey }
-      }
-    );
+    // 精简结果
+    const attributes = data.data.attributes || {};
+    const last_analysis_stats = attributes.last_analysis_stats || {};
+    const names = attributes.names || [];
+    const signature_info = attributes.signature_info || {};
+    const last_analysis_results = attributes.last_analysis_results || {};
 
-    const json = await resp.json();
-    const attr = json?.data?.attributes;
-
-    if (!attr) {
-      return res.status(404).json({ error: "File not found on VirusTotal" });
+    // 提取恶意引擎列表
+    const malicious_engines = [];
+    for (const [engine, result] of Object.entries(last_analysis_results)) {
+      if (result.category === "malicious") malicious_engines.push(engine);
     }
-
-    /* 1️⃣ 检测率 */
-    const stats = attr.last_analysis_stats;
-    const total =
-      stats.harmless +
-      stats.malicious +
-      stats.suspicious +
-      stats.undetected;
-
-    const detection_ratio = `${stats.malicious}/${total}`;
-
-    /* 2️⃣ 恶意引擎 */
-    const malicious_engines = Object.entries(
-      attr.last_analysis_results || {}
-    )
-      .filter(([, v]) => v.category === "malicious")
-      .map(([engine, v]) => ({
-        engine,
-        result: v.result
-      }));
-
-
-    /* 3️⃣ 文件名 */
-    const names = attr.names || [];
-
-    /* 4️⃣ 签名信息 */
-    const signature_info = attr.signature_info || null;
 
     return res.status(200).json({
-      hash,
-      detection_ratio,
-      malicious_engines,
-      names,
-      signature_info,
-      download: `/api/download/${hash}`
+      hash: data.data.id,
+      simplified: {
+        names,
+        signature_info,
+        last_analysis_stats,
+        malicious_engines
+      },
+      download_url: `/api/download/${data.data.id}`
     });
+
   } catch (e) {
-    res.status(500).json({ error: e.toString() });
+    return res.status(500).json({ error: e.toString() });
   }
 }
