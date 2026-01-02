@@ -1,49 +1,30 @@
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Only POST allowed" });
-  }
+  if (req.method !== "POST") return res.status(405).end();
 
   const { hash } = req.body;
   if (!hash) return res.status(400).json({ error: "Missing hash" });
 
-  try {
-    const apiKey = process.env.VT_KEY;
-    if (!apiKey) return res.status(500).json({ error: "VT_KEY not set in environment variables" });
+  const apiKey = process.env.VT_KEY;
+  if (!apiKey) return res.status(500).json({ error: "VT_KEY not set" });
 
-    const url = `https://www.virustotal.com/api/v3/files/${hash}`;
+  const r = await fetch(`https://www.virustotal.com/api/v3/files/${hash}`, {
+    headers: { "x-apikey": apiKey }
+  });
 
-    const resp = await fetch(url, { headers: { "x-apikey": apiKey } });
-    const data = await resp.json();
+  const data = await r.json();
+  const a = data.data?.attributes;
+  if (!a) return res.status(404).json({ error: "File not found" });
 
-    if (!data || !data.data) {
-      return res.status(404).json({ error: "No data found for this hash" });
-    }
+  const stats = a.last_analysis_stats;
+  const engines = Object.entries(a.last_analysis_results || {})
+    .filter(([, v]) => v.category === "malicious")
+    .map(([k]) => k);
 
-    // 精简结果
-    const attributes = data.data.attributes || {};
-    const last_analysis_stats = attributes.last_analysis_stats || {};
-    const names = attributes.names || [];
-    const signature_info = attributes.signature_info || {};
-    const last_analysis_results = attributes.last_analysis_results || {};
-
-    // 提取恶意引擎列表
-    const malicious_engines = [];
-    for (const [engine, result] of Object.entries(last_analysis_results)) {
-      if (result.category === "malicious") malicious_engines.push(engine);
-    }
-
-    return res.status(200).json({
-      hash: data.data.id,
-      simplified: {
-        names,
-        signature_info,
-        last_analysis_stats,
-        malicious_engines
-      },
-      download_url: `/api/download/${data.data.id}`
-    });
-
-  } catch (e) {
-    return res.status(500).json({ error: e.toString() });
-  }
+  res.json({
+    filename: a.meaningful_name,
+    signature: a.signature_info?.product || "",
+    malicious: stats.malicious,
+    total: Object.values(stats).reduce((a, b) => a + b, 0),
+    engines
+  });
 }
