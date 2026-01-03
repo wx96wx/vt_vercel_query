@@ -25,7 +25,7 @@ export default function Home() {
       />
 
       <button onClick={submit} style={{ marginTop: 10 }}>
-        查询
+        query
       </button>
 
       {result && !result.error && (
